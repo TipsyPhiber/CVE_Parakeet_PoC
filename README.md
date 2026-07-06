@@ -1,4 +1,4 @@
-# CVE_Parakeet_PoC
+# Parakeet Model Loader Denial of Service PoC
 
 ## Summary
 
@@ -8,6 +8,21 @@ This is reachable through the public loading entry points (e.g. `parakeet_init_f
 
 **Affected file:** `src/parakeet.cpp`
 **Reproduced on commit:** `6fc7c33b` (current `master` at time of writing), built with `-DWHISPER_SANITIZE_ADDRESS=ON`.
+**Impact:** denial of service / process termination.
+**Suggested CWE:** CWE-20 (Improper Input Validation), with CWE-248 (Uncaught Exception) as a related weakness.
+
+## Security impact and attacker model
+
+This issue matters when Parakeet model files cross a trust boundary. An attacker who can cause an application using the whisper.cpp Parakeet loader to load a crafted model file can terminate the target application process during model initialization.
+
+Realistic examples include:
+
+- A service or worker that accepts user-provided model files, model bundles, or model paths and loads them server-side.
+- A desktop or CLI application that lets users open downloaded or community-provided Parakeet models.
+- An automated pipeline that fetches model artifacts from external registries, shared storage, pull requests, or user-controlled project directories.
+- Any application that exposes `parakeet_init_from_file_with_params` or `parakeet_init_from_buffer_with_params_no_state` to data that is not fully trusted.
+
+This report does not claim code execution or memory corruption. The demonstrated impact is reliable process abort caused by missing validation of attacker-controlled model metadata.
 
 ## Root cause
 
@@ -57,7 +72,13 @@ A self-contained generator and harness are attached. The generator writes a mini
 
 The crafted file uses `n_loaded == 0` (no tensor data), which reaches the "empty model" path in `parakeet_model_load` (`parakeet.cpp:1461`) that returns `true`, so control reaches `mel_cache.init(n_fft)` at `parakeet.cpp:3114`.
 
-**Generator (`make_poc.py`):**
+### Note on the empty-model path
+
+The PoC intentionally uses the smallest file that the current loader accepts as successfully loaded. This is not relying on a test-harness-only entry point: the file is passed through the public Parakeet buffer-loading API, parsed by the normal model loader, and accepted by `parakeet_model_load`.
+
+The relevant security issue is that `n_fft` is trusted before the loader proves that the model metadata is valid. Even on the accepted empty-model path, untrusted file contents populate `ctx->model.hparams.n_fft`, `parakeet_model_load` returns success, and the caller uses that value outside the exception guard. A stricter loader should reject the malformed model cleanly instead of reaching `mel_cache.init()` with an invalid size.
+
+**Generator (`make_poc_final.py`):**
 
 ```python
 import struct
@@ -120,7 +141,7 @@ int main(int argc, char** argv) {
 cmake -B build -DWHISPER_SANITIZE_ADDRESS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --target parakeet -j
 
-python3 make_poc.py
+python3 make_poc_final.py
 
 # NOTE: the Parakeet loader lives in libparakeet, not libwhisper.
 g++ -g -O0 -fsanitize=address run_poc.cpp -o run_poc \

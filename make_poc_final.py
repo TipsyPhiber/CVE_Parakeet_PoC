@@ -4,7 +4,7 @@ validation bug in ggml-org/whisper.cpp src/parakeet.cpp.
 
 Run:  python3 make_poc_final.py
 Test: g++ -g -O0 -fsanitize=address run_poc.cpp -o run_poc \
-          -L<build>/bin -lwhisper -lggml -lggml-base -lggml-cpu \
+          -L<build>/bin -lparakeet -lggml -lggml-base -lggml-cpu \
           -Wl,-rpath,<build>/bin -Iinclude -Iggml/include
       LD_LIBRARY_PATH=<build>/bin ./run_poc poc_nfft_neg1.bin   # terminate at model load
 
