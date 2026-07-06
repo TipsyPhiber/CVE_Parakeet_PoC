@@ -22,6 +22,12 @@ Realistic examples include:
 - An automated pipeline that fetches model artifacts from external registries, shared storage, pull requests, or user-controlled project directories.
 - Any application that exposes `parakeet_init_from_file_with_params` or `parakeet_init_from_buffer_with_params_no_state` to data that is not fully trusted.
 
+### Upstream CLI reachability
+
+The upstream repository includes `examples/parakeet-cli`, whose documented usage accepts `-m, --model FILE` as a model path. In `examples/parakeet-cli/parakeet-cli.cpp`, command-line parsing assigns that argument to `params.model`, and `main()` passes `params.model.c_str()` directly to `parakeet_init_from_file_with_params()` before processing input audio. This provides a concrete project-provided executable path where the model file is selected by the user or surrounding workflow and then parsed by the vulnerable loader.
+
+I also verified the crash through this upstream CLI by building `parakeet-cli` at commit `6fc7c33b` and running it with `--model poc_nfft_neg1.bin`. The process aborted while loading the model, before opening the audio input, with the stack reaching `examples/parakeet-cli/parakeet-cli.cpp:137` -> `parakeet_init_from_file_with_params()` -> `parakeet_mel_cache::init()`.
+
 This report does not claim code execution or memory corruption. The demonstrated impact is reliable process abort caused by missing validation of attacker-controlled model metadata.
 
 ## Root cause
@@ -170,7 +176,16 @@ g++ -g -O0 -fsanitize=address run_poc.cpp -o run_poc \
 ./run_poc poc_nfft_neg1.bin
 ```
 
-The local run exited with status `134` (`SIGABRT`). The output showed `parakeet_model_load: n_fft = -1`, the empty-model warning, and then an uncaught `std::length_error` from `std::vector<float>::resize()` in `parakeet_mel_cache::init()`. The relevant verified stack frames were:
+The harness run exited with status `134` (`SIGABRT`). I also built upstream `parakeet-cli` and verified the same abort through the documented model-file option:
+
+```sh
+cmake --build build-parakeet-asan --target parakeet-cli -j
+./build-parakeet-asan/bin/parakeet-cli --no-gpu --model path/to/CVE_Parakeet_PoC/poc_nfft_neg1.bin --file /tmp/nonexistent.wav
+```
+
+The CLI run exited with status `134` before opening the audio file. The CLI stack included `examples/parakeet-cli/parakeet-cli.cpp:137`, where `params.model.c_str()` is passed to `parakeet_init_from_file_with_params()`.
+
+The harness run output showed `parakeet_model_load: n_fft = -1`, the empty-model warning, and then an uncaught `std::length_error` from `std::vector<float>::resize()` in `parakeet_mel_cache::init()`. The relevant verified stack frames were:
 
 ```text
 #12 std::vector<float>::resize (__new_size=18446744073709551615)
